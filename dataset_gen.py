@@ -14,7 +14,7 @@ DIFFICULTY = "xtreme"
 NUM_SAMPLES = 2**24
 SAFE_REVEAL = False
 SEED = 123
-N_JOBS = 4
+N_JOBS = 12
 OUT = f"data/{DIFFICULTY}/{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_minesweeper_{DIFFICULTY}_{NUM_SAMPLES}_{SEED}.npz"
 SAVE_DATASET = False
 
