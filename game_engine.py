@@ -14,8 +14,8 @@ game_mode: Dict[str, Dict[str, int]] = {
     "test": {"rows": 5, "columns": 5, "mines": 5}, # mine density = (mines*100/(rows*columns))%  = 20.0
     "easy": {"rows": 10, "columns": 10, "mines": 10}, # mine density = (mines*100/(rows*columns))%  = 10.0
     "intermediate": {"rows": 16, "columns": 16, "mines": 40}, # mine density = (mines*100/(rows*columns))%  = 15.625
-    "hard": {"rows": 16, "columns": 40, "mines": 99}, # mine density = (mines*100/(rows*columns))%  = 15.46875
-    "xtreme": {"rows": 16, "columns": 16, "mines": 64}, # mine density = (mines*100/(rows*columns))%  = 25.0
+    "hard": {"rows": 16, "columns": 30, "mines": 99}, # mine density = (mines*100/(rows*columns))%  = 20.625
+    "xtreme": {"rows": 12, "columns": 12, "mines": 36}, # mine density = (mines*100/(rows*columns))%  = 25.0
 }
 
 
