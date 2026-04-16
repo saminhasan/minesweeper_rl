@@ -99,11 +99,20 @@ class ImmutableMixin(object):
         """return the 'core' data of this object in a hashable format, usually a tuple"""
         assert False, "must override"
 
+    def _cached_canonical(self) -> Tuple[Any, ...]:
+        if not hasattr(self, "_immutable_canonical"):
+            self._immutable_canonical = self._canonical()
+        return self._immutable_canonical
+
     def __eq__(self, o: Any) -> bool:
-        return type(self) == type(o) and self._canonical() == o._canonical()
+        if self is o:
+            return True
+        return type(self) == type(o) and self._cached_canonical() == o._cached_canonical()
 
     def __ne__(self, o: Any) -> bool:
         return not (self == o)
 
     def __hash__(self) -> int:
-        return hash(self._canonical())
+        if not hasattr(self, "_immutable_hash"):
+            self._immutable_hash = hash(self._cached_canonical())
+        return self._immutable_hash

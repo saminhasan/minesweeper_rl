@@ -11,7 +11,7 @@ from scipy.ndimage import gaussian_filter
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
-from game_engine import Minesweeper
+from game_engine import Minesweeper, game_mode
 
 
 FONT_PATH: str = "./assets/fonts"
@@ -27,7 +27,11 @@ background_color: Tuple[int, int, int] = (5, 5, 5)
 text_color: Tuple[int, int, int] = (220, 220, 220)
 font_size: int = 18
 
-levels = {0: "test", 1: "easy", 2: "intermediate", 3: "hard", 4: "xtreme"}
+levels = {
+    1: "easy",
+    2: "intermediate",
+    3: "hard",
+}
 
 
 # -------------------------
@@ -150,7 +154,10 @@ def predict(board: Minesweeper) -> np.ndarray:
 
 class GUI:
     def __init__(self, level: int) -> None:
-        self.level: str = levels[level]
+        requested_level = levels.get(level)
+        if requested_level is None or requested_level not in game_mode:
+            requested_level = "hard" if "hard" in game_mode else next(iter(game_mode))
+        self.level: str = requested_level
         self._initialized: bool = False
         self.init_game()
 
@@ -225,9 +232,49 @@ class GUI:
         elif key == pg.K_z:
             self.board.random_safe_reveal()
             self.probability = predict(self.board)
-        elif key in [pg.K_0, pg.K_1, pg.K_2, pg.K_3, pg.K_4]:
-            self.level = levels[key - pg.K_0]
-            self.reset_game()
+        elif key in [pg.K_1, pg.K_2, pg.K_3]:
+            chosen_level = levels.get(key - pg.K_0)
+            if chosen_level is not None and chosen_level in game_mode:
+                self.level = chosen_level
+                self.reset_game()
+
+    def _is_covered(self, row: int, col: int) -> bool:
+        return self.board.state[row, col] == self.board.states.COVERED
+
+    def _is_uncovered(self, row: int, col: int) -> bool:
+        return self.board.state[row, col] == self.board.states.UNCOVERED
+
+    def _cell_mine_count(self, row: int, col: int) -> int:
+        return int(self.board.mine_count[row, col])
+
+    def _cleanup_flagged_cells(self) -> None:
+        self.flagged = {flag for flag in self.flagged if self._is_covered(flag[0], flag[1])}
+
+    def _cell_rect_origin(self, row: int, col: int) -> Tuple[int, int]:
+        x = BORDER_SIZE + col * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1
+        y = BORDER_SIZE + row * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1
+        return x, y
+
+    def _blit_marker_centered(self, image: pg.Surface, row: int, col: int) -> None:
+        x, y = self._cell_rect_origin(row, col)
+        self.screen.blit(
+            image,
+            (
+                x + image.get_width() // 2,
+                y + image.get_height() // 2,
+            ),
+        )
+
+    def _level_help_lines(self) -> List[str]:
+        lines = [f"Current Level: {self.level.capitalize()}"]
+        if "easy" in game_mode:
+            lines.append("Press 1 - Easy")
+        if "intermediate" in game_mode:
+            lines.append("Press 2 - Intermediate")
+        if "hard" in game_mode:
+            lines.append("Press 3 - Hard")
+        lines.append("Press H in game to Toggle Help")
+        return lines
 
     def handle_mouse_event(self, event: pg.event.Event) -> None:
         if self.board.game_over or self.board.game_won:
@@ -245,16 +292,13 @@ class GUI:
                 self.board.reveal(row, col)
                 if not (self.board.game_over or self.board.game_won):
                     self.probability = predict(self.board)
-                    self.flagged = {
-                        flag for flag in self.flagged if self.board.minefield[flag]["state"] != self.board.states.UNCOVERED
-                    }
+                    self._cleanup_flagged_cells()
 
-        elif event.button == pg.BUTTON_RIGHT:
-            if self.board.minefield[row, col]["state"] != self.board.states.UNCOVERED:
-                if (row, col) in self.flagged:
-                    self.flagged.remove((row, col))
-                else:
-                    self.flagged.add((row, col))
+        elif event.button == pg.BUTTON_RIGHT and self._is_covered(row, col):
+            if (row, col) in self.flagged:
+                self.flagged.remove((row, col))
+            else:
+                self.flagged.add((row, col))
 
     def draw(self) -> None:
         self.screen.fill(background_color)
@@ -285,12 +329,7 @@ class GUI:
 
         text_lines = [
             main_text,
-            f"Current Level: {self.level.capitalize()}",
-            "Press 1 - Easy",
-            "Press 2 - Intermediate",
-            "Press 3 - Hard",
-            "Press 4 - Extreme",
-            "Press H in game to Toggle Help",
+            *self._level_help_lines(),
         ]
 
         start_y = self.height // 4
@@ -303,7 +342,7 @@ class GUI:
             self.screen.blit(text_surface, text_rect)
 
     def draw_clusters(self) -> None:
-        for cluster in find_clusters(self.board.minefield["state"], COVERED):
+        for cluster in find_clusters(self.board.state, COVERED):
             draw_polygon_with_holes(
                 self.screen,
                 rects_to_polygon(get_rects_from_cluster(cluster, CELL_SIZE, BORDER_SIZE, LINE_WIDTH)),
@@ -315,42 +354,23 @@ class GUI:
 
     def draw_mines(self) -> None:
         for row, col in self.board.mines:
-            self.screen.blit(
-                self.scaled_mine_image,
-                (
-                    BORDER_SIZE + col * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1 + self.scaled_mine_image.get_width() // 2,
-                    BORDER_SIZE + row * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1 + self.scaled_mine_image.get_height() // 2,
-                ),
-            )
+            self._blit_marker_centered(self.scaled_mine_image, row, col)
 
     def draw_flags(self) -> None:
         for row, col in self.board.mines:
-            self.screen.blit(
-                self.scaled_flag_image,
-                (
-                    BORDER_SIZE + col * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1 + self.scaled_flag_image.get_width() // 2,
-                    BORDER_SIZE + row * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1 + self.scaled_flag_image.get_height() // 2,
-                ),
-            )
+            self._blit_marker_centered(self.scaled_flag_image, row, col)
 
     def draw_markers(self) -> None:
         for row, col in self.flagged:
-            self.screen.blit(
-                self.scaled_flag_image,
-                (
-                    BORDER_SIZE + col * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1 + self.scaled_flag_image.get_width() // 2,
-                    BORDER_SIZE + row * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1 + self.scaled_flag_image.get_height() // 2,
-                ),
-            )
+            self._blit_marker_centered(self.scaled_flag_image, row, col)
 
     def draw_cells_bayes(self) -> None:
         for row in range(self.board.n_rows):
             for col in range(self.board.n_cols):
-                x = BORDER_SIZE + col * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1
-                y = BORDER_SIZE + row * (CELL_SIZE + BORDER_SIZE * 2 + LINE_WIDTH) + 1
+                x, y = self._cell_rect_origin(row, col)
 
-                if self.board.minefield[row, col]["state"] == self.board.states.UNCOVERED:
-                    mc = int(self.board.minefield[row, col]["mine_count"])
+                if self._is_uncovered(row, col):
+                    mc = self._cell_mine_count(row, col)
                     if mc > 0:
                         text_surface = self.font.render(f"{mc}", True, text_color)
                         text_rect = text_surface.get_rect(center=(x + CELL_SIZE // 2, y + CELL_SIZE // 2))
@@ -359,7 +379,7 @@ class GUI:
                 if (
                     self.help
                     and (row, col) not in self.flagged
-                    and self.board.minefield[row, col]["state"] == self.board.states.COVERED
+                    and self._is_covered(row, col)
                 ):
                     probability = float(self.probability[row, col])
                     if probability == 0:
@@ -415,7 +435,7 @@ class GUI:
 
 
 def main() -> None:
-    game = GUI(4)
+    game = GUI(3)
 
     while game.running:
         game.handle_events()

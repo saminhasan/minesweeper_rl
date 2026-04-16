@@ -1,12 +1,11 @@
 from __future__ import annotations
-import queue
+import heapq
 import operator
 import itertools
 import collections
 from util import *
-from queue import PriorityQueue
 from functools import reduce
-from typing import Any, Set, Dict, List, Self, Tuple, Union, Iterator, Optional, Callable, Mapping
+from typing import Any, Set, Dict, List, Self, Tuple, Union, Iterator, Optional, Callable, Mapping, Iterable
 
 
 set_ = frozenset
@@ -40,7 +39,7 @@ class Rule(ImmutableMixin):
         represents that cell (string, int, any hashable)
     """
 
-    def __init__(self, num_mines: int, cells: List[str]) -> None:
+    def __init__(self, num_mines: int, cells: List[Any]) -> None:
         self.num_mines = num_mines
         self.cells = set_(cells)
 
@@ -74,6 +73,9 @@ class Permutation(ImmutableMixin):
         cell set is determined implicitly from mapping, so all cells in set
         must have an entry, even if they have 0 mines"""
         self.mapping = dict(mapping)
+        self._cells = set_(self.mapping.keys())
+        self._k = sum(self.mapping.values())
+        self._multiplicity: Optional[float] = None
 
     def subset(self, subcells: Union[Set[frozenset], frozenset]) -> Permutation:
         """return a sub-permutation containing only the cells in 'subcells'"""
@@ -82,8 +84,16 @@ class Permutation(ImmutableMixin):
     def compatible(self, permu: Self) -> bool:
         """return whether this permutation is consistent with 'permu', meaning
         the cells they have in common have matching numbers of mines assigned"""
-        overlap = self.cells() & permu.cells()
-        return self.subset(overlap) == permu.subset(overlap)
+        if len(self.mapping) <= len(permu.mapping):
+            smaller, larger = self.mapping, permu.mapping
+        else:
+            smaller, larger = permu.mapping, self.mapping
+
+        for cell_, mines in smaller.items():
+            other = larger.get(cell_)
+            if other is not None and other != mines:
+                return False
+        return True
 
     def combine(self, permu: Self) -> Permutation:
         """return a new permutation by combining this permutation with
@@ -96,11 +106,11 @@ class Permutation(ImmutableMixin):
 
     def k(self) -> int:
         """return total # mines in this permutation"""
-        return sum(self.mapping.values())
+        return self._k
 
-    def cells(self) -> Set[frozenset]:
+    def cells(self) -> frozenset:
         """return set of cells in this permutation"""
-        return set(self.mapping)
+        return self._cells
 
     def multiplicity(self) -> float:
         """count the # of permutations this permutation would correspond to if
@@ -109,10 +119,12 @@ class Permutation(ImmutableMixin):
         e.g., N mines in a supercell of M cells has (M choose N) actual
         configurations
         """
-        return product(choose(len(cell_), k) for cell_, k in self.mapping.items())
+        if self._multiplicity is None:
+            self._multiplicity = product(choose(len(cell_), k) for cell_, k in self.mapping.items())
+        return self._multiplicity
 
-    def _canonical(self) -> Tuple[Tuple[frozenset, int], ...]:
-        return tuple(sorted(iter(self.mapping.items()), key=lambda k_v: hash(k_v[0])))
+    def _canonical(self) -> frozenset:
+        return set_(self.mapping.items())
 
     def __repr__(self):
         cell_counts = sorted([(sorted(list(cell)), count) for cell, count in self.mapping.items()])
@@ -270,8 +282,9 @@ class PermutedRuleset(object):
         while interferences:
             r, r_ov = interferences.pop()
             changed = False
-            for permu in list(self.permu_map[r]):  # copy iterable so we can modify original
-                if self.permu_map[r_ov].compatible(permu).empty():
+            ov_permuset = self.permu_map[r_ov]
+            for permu in tuple(self.permu_map[r]):  # copy iterable so we can modify original
+                if not ov_permuset.has_compatible(permu):
                     # this permutation has no compatible permutation in the overlapping
                     # rule. thus, it can never occur
                     self.permu_map[r].remove(permu)
@@ -428,7 +441,10 @@ class FrontTally(object):
         """calculate the per-cell expected mine values, summed/weighted across
         all sub-tallies"""
         self.normalize()
-        collapsed = map_reduce(list(self.subtallies.values()), lambda subtally: subtally.collapse(), sum)
+        collapsed: Dict[Any, float] = {}
+        for subtally in self.subtallies.values():
+            for cell_, value in subtally.collapse():
+                collapsed[cell_] = collapsed.get(cell_, 0.0) + value
         for entry in collapsed.items():
             yield entry
 
@@ -545,15 +561,21 @@ class CellRulesMap(object):
     def remove_rule(self, rule: Rule_) -> None:
         self.rules.remove(rule)
         for cell_ in rule.cells_:
-            self.map[cell_].remove(rule)
+            cell_rules = self.map[cell_]
+            cell_rules.remove(rule)
+            if not cell_rules:
+                del self.map[cell_]
 
     def overlapping_rules(self, rule: Rule_) -> Set[Rule_]:
         """Return a set of rules that overlap with 'rule', i.e., have at least one cell in common."""
-        # Use set().union to combine all sets from self.map for the cells in rule.cells_
-        overlapping: Set[Rule_] = set().union(*(self.map[cell_] for cell_ in rule.cells_ if cell_ in self.map))
+        overlapping: Set[Rule_] = set()
+        for cell_ in rule.cells_:
+            cell_rules = self.map.get(cell_)
+            if cell_rules:
+                overlapping.update(cell_rules)
 
-        # Exclude the rule itself from the overlapping rules
-        return overlapping - {rule}
+        overlapping.discard(rule)
+        return overlapping
 
     def interference_edges(self) -> Set[Tuple[Rule_, Rule_]]:
         """return pairs of all rules that overlap each other; each pair is
@@ -601,21 +623,31 @@ class RuleReducer(object):
         self.active_rules: Set[Rule_] = set()
         # reverse lookup for rules containing a given cell
         self.cell_rules_map = CellRulesMap()
-        # current list of all possible reductions
-        self.candidate_reductions: PriorityQueue = PriorityQueue()
+        # heap of possible reductions: (priority tuple, sequence, reduction)
+        self.candidate_reductions: List[Tuple[Tuple[int, int, float], int, Reduceable]] = []
+        self._reduction_seq = 0
 
-    def add_rules(self, rules: List[Rule_]) -> None:
+    def add_rules(self, rules: Iterable[Rule_]) -> None:
         """add a set of rules to the ruleset"""
         for rule in rules:
             self.add_rule(rule)
 
     def add_rule(self, rule: Rule_) -> None:
         """add a new rule to the active ruleset"""
-        for base_rule in rule.decompose():
-            self.add_base_rule(base_rule)
+        # Inline Rule_.decompose() fast path: most rules are non-trivial.
+        if rule.num_mines == 0 or rule.num_mines == rule.num_cells:
+            for cell_ in rule.cells_:
+                size = len(cell_)
+                self.add_base_rule(Rule_(size if rule.num_mines > 0 else 0, set_([cell_]), size))
+            # degenerate rules (no cells) disappear here
+            return
+
+        self.add_base_rule(rule)
 
     def add_base_rule(self, rule: Rule_) -> None:
         """helper for adding a rule"""
+        if rule in self.active_rules:
+            return
         self.active_rules.add(rule)
         self.cell_rules_map.add_rule(rule)
         self.update_reduceables(rule)
@@ -623,17 +655,29 @@ class RuleReducer(object):
     def add_reduceable(self, reduc: Reduceable) -> None:
         # priority queue priorities are lowest first
         prio = tuple(-k for k in reduc.metric())
-        self.candidate_reductions.put((prio, reduc))
+        heapq.heappush(self.candidate_reductions, (prio, self._reduction_seq, reduc))
+        self._reduction_seq += 1
 
     def update_reduceables(self, rule: Rule_) -> None:
         """update the index of which rules are reduceable from others"""
-        rules_ov = self.cell_rules_map.overlapping_rules(rule)
-        for rule_ov in rules_ov:
-            if rule_ov.is_subrule_of(rule):
-                # catches if rules are equivalent
-                self.add_reduceable(Reduceable(rule, rule_ov))
-            elif rule.is_subrule_of(rule_ov):
-                self.add_reduceable(Reduceable(rule_ov, rule))
+        for rule_ov in self.cell_rules_map.overlapping_rules(rule):
+            if rule_ov.num_cells <= rule.num_cells:
+                # Quick mine/non-mine bounds check before subset test.
+                if (
+                    rule_ov.num_mines <= rule.num_mines
+                    and (rule_ov.num_cells - rule_ov.num_mines) <= (rule.num_cells - rule.num_mines)
+                    and rule_ov.is_subrule_of(rule)
+                ):
+                    # catches if rules are equivalent
+                    self.add_reduceable(Reduceable(rule, rule_ov))
+            elif rule.num_cells < rule_ov.num_cells:
+                # Quick mine/non-mine bounds check before subset test.
+                if (
+                    rule.num_mines <= rule_ov.num_mines
+                    and (rule.num_cells - rule.num_mines) <= (rule_ov.num_cells - rule_ov.num_mines)
+                    and rule.is_subrule_of(rule_ov)
+                ):
+                    self.add_reduceable(Reduceable(rule_ov, rule))
 
     def remove_rule(self, rule: Rule_) -> None:
         """remove a rule from the active ruleset/index, presumably because it
@@ -645,8 +689,8 @@ class RuleReducer(object):
 
     def pop_best_reduction(self) -> Reduceable | None:
         """get the highest-value reduction to perform next"""
-        while not self.candidate_reductions.empty():
-            reduction = self.candidate_reductions.get()[1]
+        while self.candidate_reductions:
+            reduction = heapq.heappop(self.candidate_reductions)[2]
             if not reduction.contained_within(self.active_rules):
                 continue
             return reduction
@@ -722,6 +766,8 @@ class PermutationSet(object):
         self.k = k
         self.permus = permus
         self.constrained = False
+        self._compat_cache: Dict[Permutation, Set[Permutation]] = {}
+        self._has_compat_cache: Dict[Permutation, bool] = {}
 
     def _immutable(self):
         """helper function for comparison in unit tests"""
@@ -753,6 +799,8 @@ class PermutationSet(object):
         conflicts with another rule"""
         self.permus.remove(permu)
         self.constrained = True
+        self._compat_cache.clear()
+        self._has_compat_cache.clear()
 
     def empty(self) -> bool:
         """return whether the set is empty"""
@@ -761,7 +809,28 @@ class PermutationSet(object):
     def compatible(self, permu: Permutation) -> PermutationSet:
         """return a new PermutationSet containing only the Permutations that
         are compatible with the given Permutation 'permu'"""
-        return PermutationSet(self.cells_, self.k, set(p for p in self.permus if p.compatible(permu)))
+        return PermutationSet(self.cells_, self.k, self.compatible_permus(permu))
+
+    def compatible_permus(self, permu: Permutation) -> Set[Permutation]:
+        """return compatible permutations as a plain set for hotpath callers."""
+        cached = self._compat_cache.get(permu)
+        if cached is not None:
+            return cached
+
+        matched = {p for p in self.permus if p.compatible(permu)}
+        self._compat_cache[permu] = matched
+        self._has_compat_cache[permu] = bool(matched)
+        return matched
+
+    def has_compatible(self, permu: Permutation) -> bool:
+        """return whether any permutation in this set is compatible with permu."""
+        cached = self._has_compat_cache.get(permu)
+        if cached is not None:
+            return cached
+
+        result = any(p.compatible(permu) for p in self.permus)
+        self._has_compat_cache[permu] = result
+        return result
 
     def subset(self, cell_subset: frozenset) -> PermutationSet:
         """return a new PermutationSet consisting of the sub-setted
@@ -811,13 +880,17 @@ class PermutationSet(object):
         # operation
 
         # get the remaining permutation sets for each sub-permutation
-        permu_remainders = set(
-            map_reduce(
-                self.permus,
-                emitfunc=lambda p: [(p.subset(cell_subset), p)],
-                reducefunc=lambda pv: set_(p.subset(cell_remainder) for p in pv),
-            ).values()
-        )
+        remainders_by_subset: Dict[Permutation, Set[Permutation]] = {}
+        for p in self.permus:
+            p_subset = p.subset(cell_subset)
+            p_remainder = p.subset(cell_remainder)
+            bucket = remainders_by_subset.get(p_subset)
+            if bucket is None:
+                bucket = set()
+                remainders_by_subset[p_subset] = bucket
+            bucket.add(p_remainder)
+
+        permu_remainders = set(set_(vals) for vals in remainders_by_subset.values())
         if len(permu_remainders) > 1:
             # remaining subsets are not identical for each sub-permutation; not
             # a cartesian divisor
@@ -849,31 +922,34 @@ class EnumerationState(object):
         # the current configuration-in-progress
         self.fixed: Set = set()
         # subset of ruleset whose permutations are still 'open'
-        self.free = dict((rule, set(permu_set)) for rule, permu_set in ruleset.permu_map.items())
+        self.free = {rule: permu_set.permus.copy() for rule, permu_set in ruleset.permu_map.items()}
 
         # helper function (closure)
         self.overlapping_rules = lambda rule: ruleset.cell_rules_map.overlapping_rules(rule)
-        # index for constraining overlapping permutations
-        # mapping: (permutation, overlapping rule) -> PermutationSet of valid permutations for overlapping rule
-        self.compatible_rule_index = self.build_compatibility_index(ruleset.permu_map)
+        # original permutation sets per rule (shared by clones) for lazy compatibility checks
+        self.rule_permuset_map = ruleset.permu_map
+        # lazy index for constraining overlapping permutations
+        # mapping: (permutation, overlapping rule) -> set of valid permutations for overlapping rule
+        self.compatible_rule_index: Dict[Tuple[Permutation, Rule_], Set[Permutation]] = {}
 
     def clone(self) -> EnumerationState:
         """clone this state"""
         state = EnumerationState()
         state.fixed = set(self.fixed)
-        state.free = dict((rule, set(permu_set)) for rule, permu_set in self.free.items())
+        state.free = {rule: permu_set.copy() for rule, permu_set in self.free.items()}
         state.overlapping_rules = self.overlapping_rules
+        state.rule_permuset_map = self.rule_permuset_map
         state.compatible_rule_index = self.compatible_rule_index
         return state
 
-    def build_compatibility_index(self, rspm: Dict[Rule_, PermutationSet]) -> Dict[Tuple[Permutation, Rule_], PermutationSet]:
-        """build the constraint index"""
-        index = {}
-        for rule, permu_set in rspm.items():
-            for permu in permu_set:
-                for rule_ov in self.overlapping_rules(rule):
-                    index[(permu, rule_ov)] = rspm[rule_ov].compatible(permu)
-        return index
+    def allowed_permus(self, permu: Permutation, related_rule: Rule_) -> Set[Permutation]:
+        """get/set cached compatible permutations for (permu, related_rule)."""
+        key = (permu, related_rule)
+        allowed = self.compatible_rule_index.get(key)
+        if allowed is None:
+            allowed = self.rule_permuset_map[related_rule].compatible_permus(permu)
+            self.compatible_rule_index[key] = allowed
+        return allowed
 
     def is_complete(self) -> bool:
         """return whether all rules have been 'fixed', i.e., the configuration
@@ -884,7 +960,7 @@ class EnumerationState(object):
         """pick an 'open' rule at random and 'fix' each possible permutation
         for that rule. in this manner, when done recursively, all valid
         combinations are enumerated"""
-        rule = peek(self.free)
+        rule = min(self.free, key=lambda r: len(self.free[r]))
         for permu in self.free[rule]:
             try:
                 yield self.propogate(rule, permu)
@@ -901,36 +977,40 @@ class EnumerationState(object):
     def _propogate(self, rule: Rule_, permu: Permutation) -> None:
         """'fix' a rule permutation and constrain the available permutations
         of all overlapping rules"""
-        self.fixed.add(permu)
-        del self.free[rule]
+        cascades = [(rule, permu)]
+        while cascades:
+            curr_rule, curr_permu = cascades.pop()
+            if curr_rule not in self.free:
+                # May already have been constrained by a prior cascade.
+                continue
 
-        # constrain overlapping rules
-        cascades = []
-        affected_rules = [r for r in self.overlapping_rules(rule) if r in self.free]
-        for related_rule in affected_rules:
-            # PermutationSet of the related rule, constrained _only by_ the rule/permutation just fixed
-            allowed_permus = self.compatible_rule_index[(permu, related_rule)]
-            # further constrain the related rule with this new set -- is now properly constrained by
-            # all fixed rules
-            self.free[related_rule] &= set(allowed_permus)
+            self.fixed.add(curr_permu)
+            del self.free[curr_rule]
 
-            linked_permus = self.free[related_rule]
-            if len(linked_permus) == 0:
-                # conflict
-                raise ValueError()
-            elif len(linked_permus) == 1:
-                # only one possiblity; constrain further
-                cascades.append((related_rule, peek(linked_permus)))
+            for related_rule in self.overlapping_rules(curr_rule):
+                linked_permus = self.free.get(related_rule)
+                if linked_permus is None:
+                    continue
 
-        # cascade if any other rules are now fully constrained
-        for related_rule, constrained_permu in cascades:
-            if related_rule in self.free:  # may have already been constrained by prior recurisve call
-                self._propogate(related_rule, constrained_permu)
+                # PermutationSet of related_rule constrained only by curr_rule/curr_permu.
+                allowed_permus = self.allowed_permus(curr_permu, related_rule)
+                linked_permus.intersection_update(allowed_permus)
+
+                if not linked_permus:
+                    # conflict
+                    raise ValueError()
+                if len(linked_permus) == 1:
+                    # only one possibility; constrain further
+                    cascades.append((related_rule, peek(linked_permus)))
 
     def mine_config(self) -> Permutation:
         """convert the set of fixed permutations into a single Permutation
         encompassing the mine configuration for the entire ruleset"""
-        return reduce(lambda a, b: a.combine(b), self.fixed)
+        fixed_iter = iter(self.fixed)
+        merged = next(fixed_iter)
+        for permu in fixed_iter:
+            merged = merged.combine(permu)
+        return merged
 
     def enumerate(self) -> Iterator[Permutation]:
         """recursively generate all possible mine configurations for the ruleset"""
@@ -1114,7 +1194,11 @@ class FrontPerMineTotals(object):
     @staticmethod
     def sum(front_totals: Tuple[FrontPerMineTotals, ...]) -> FrontPerMineTotals:
         """compute an aggregate sum of several mappings"""
-        return FrontPerMineTotals(map_reduce(front_totals, lambda ft: ft, sum))
+        totals: Dict[int, float] = {}
+        for ft in front_totals:
+            for num_mines, total in ft:
+                totals[num_mines] = totals.get(num_mines, 0.0) + total
+        return FrontPerMineTotals(totals)
 
     def __iter__(self) -> Iterator[tuple[int, float]]:
         return iter(self.totals.items())
@@ -1237,8 +1321,19 @@ class CombinedFront(object):
                 return None
             return (combined_mines, a_fronts.join_with(b_fronts))
 
-        cross_entries = [_f for _f in map(cross_entry, itertools.product(self, new)) if _f]
-        new_totals = map_reduce(cross_entries, lambda kv: [kv], AllFrontsPerMineTotals.sum)
+        grouped: Dict[int, List[AllFrontsPerMineTotals]] = {}
+        for pair in itertools.product(self, new):
+            entry = cross_entry(pair)
+            if not entry:
+                continue
+            num_mines, fronts = entry
+            bucket = grouped.get(num_mines)
+            if bucket is None:
+                bucket = []
+                grouped[num_mines] = bucket
+            bucket.append(fronts)
+
+        new_totals = dict((num_mines, AllFrontsPerMineTotals.sum(frontsets)) for num_mines, frontsets in grouped.items())
         return CombinedFront(new_totals)
 
     def collapse(self) -> List[dict[int, float] | dict[int, int]]:
@@ -1365,8 +1460,10 @@ def permute_and_interfere(rules: Set[Rule_]) -> PermutedRuleset:
 
 def reduce_rules(rules: List[Rule_]) -> Set[Rule_]:
     """reduce ruleset using logical deduction"""
+    if not rules:
+        return set()
     rr = RuleReducer()
-    rr.add_rules(rules)
+    rr.add_rules(set(rules))
     return rr.reduce_all()
 
 
@@ -1381,21 +1478,33 @@ def condense_supercells(rules: Set[Rule]) -> Tuple[List[Rule_], List[frozenset]]
     later, even if that cell does not group with any others. the result would
     be a singleton supercell
     """
+    if not rules:
+        return ([], [])
 
     # for each cell, list of rules that cell appears in
-    cell_rules_map = map_reduce(rules, lambda rule: [(cell, rule) for cell in rule.cells], set_)
+    cell_rules_tmp: Dict[Any, Set[Rule]] = collections.defaultdict(set)
+    for rule in rules:
+        for cell in rule.cells:
+            cell_rules_tmp[cell].add(rule)
+
     # for each 'list of rules appearing in', list of cells that share that ruleset (these cells
     # thus only ever appear together in the same rules)
-    rules_supercell_map = map_reduce(
-        iter(cell_rules_map.items()),
-        lambda cell_rules: [(cell_rules[1], cell_rules[0])],
-        set_,
+    rules_supercell_tmp: Dict[frozenset, Set[Any]] = collections.defaultdict(set)
+    for cell, cell_rules in cell_rules_tmp.items():
+        rules_supercell_tmp[set_(cell_rules)].add(cell)
+
+    rules_supercell_map: Dict[frozenset, frozenset] = dict(
+        (ruleset, set_(cells)) for ruleset, cells in rules_supercell_tmp.items()
     )
+
     # for each original rule, list of 'supercells' appearing in that rule
-    rule_supercells_map = map_reduce(
-        iter(rules_supercell_map.items()),
-        lambda rules_cell_: [(rule, rules_cell_[1]) for rule in rules_cell_[0]],
-        set_,
+    rule_supercells_tmp: Dict[Rule, Set[frozenset]] = collections.defaultdict(set)
+    for ruleset, supercell in rules_supercell_map.items():
+        for rule in ruleset:
+            rule_supercells_tmp[rule].add(supercell)
+
+    rule_supercells_map: Dict[Rule, frozenset] = dict(
+        (rule, set_(supercells)) for rule, supercells in rule_supercells_tmp.items()
     )
 
     return (
@@ -1427,12 +1536,14 @@ def solve(
     determined = set(r for r in ruless if r.is_trivial())
     ruless -= determined
 
-    ruleset = permute_and_interfere(ruless)
-    fronts = ruleset.split_fronts()
+    fronts: Set[PermutedRuleset] = set()
+    if ruless:
+        fronts = permute_and_interfere(ruless).split_fronts()
 
-    trivial_fronts = set(f for f in fronts if f.is_trivial())
-    determined |= set(f.trivial_rule() for f in trivial_fronts)
-    fronts -= trivial_fronts
+        trivial_fronts = set(f for f in fronts if f.is_trivial())
+        if trivial_fronts:
+            determined |= set(f.trivial_rule() for f in trivial_fronts)
+            fronts -= trivial_fronts
 
     stats = set(enumerate_front(f) for f in fronts)
     stats.update(r.tally() for r in determined)

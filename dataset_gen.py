@@ -1,31 +1,48 @@
+from __future__ import annotations
+
+import csv
+import json
 from datetime import datetime
-import gc
-from multiprocessing import Manager
 from pathlib import Path
-from threading import Thread
-from time import sleep
-from typing import TypeAlias
+from typing import TypeAlias, TypedDict
 
 import numpy as np
-from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from game_engine import Minesweeper, game_mode
 
-DIFFICULTY = "hard"
-NUM_SAMPLES = 2**24
-SAFE_REVEAL = False
-SEED = 123
-N_JOBS = 8
-OUT = f"data/{DIFFICULTY}/{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_minesweeper_{DIFFICULTY}_{NUM_SAMPLES}_{SEED}.npz"
-SAVE_DATASET = True
 
-MAX_SAMPLES_PER_GAME = 4
+DIFFICULTY = "hard" # intermediate # hard # easy
+NUM_SAMPLES = 2**20
+SAFE_REVEAL = True
+SEED = 123
+
+OUT_BASE_DIR = Path("data_bin")
+RUN_NAME = f"{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_minesweeper_{DIFFICULTY}_{NUM_SAMPLES}_{SEED}"
+OUT_DIR = OUT_BASE_DIR / DIFFICULTY / RUN_NAME
+
+MAX_SAMPLES_PER_GAME = 16
 MIN_REVEALED_FRAC = 0.05
 MAX_REVEALED_FRAC = 0.95
 
-Array3D: TypeAlias = np.ndarray
-ChunkResult: TypeAlias = tuple[Array3D, Array3D, Array3D]
+TARGET_DIR_SIZE_GB = 18.0
+TARGET_DIR_BYTES = int(TARGET_DIR_SIZE_GB * (1024**3))
+PROMPT_BEFORE_RUN = True
+
+PAYLOAD_DTYPE = np.float64
+PAYLOAD_PLANES = ("x_input", "y_prob", "covered_mask", "mine_mask")
+
+Array2D: TypeAlias = np.ndarray
+
+
+class GenerationSummary(TypedDict):
+    num_samples: int
+    games_simulated: int
+    rows: int
+    cols: int
+    bytes_per_snapshot: int
+    files_per_dir: int
+    target_dir_bytes: int
 
 
 def count_revealed(board: Minesweeper) -> int:
@@ -53,9 +70,9 @@ def should_keep_sample(
     return True
 
 
-def estimate_memory_bytes(num_samples: int, rows: int, cols: int) -> int:
-    bytes_per_cell = np.dtype(np.float32).itemsize * 2 + np.dtype(np.bool_).itemsize
-    return num_samples * rows * cols * bytes_per_cell
+def bytes_per_snapshot(rows: int, cols: int) -> int:
+    bytes_per_value = np.dtype(PAYLOAD_DTYPE).itemsize
+    return len(PAYLOAD_PLANES) * rows * cols * bytes_per_value
 
 
 def format_bytes(n: int) -> str:
@@ -70,282 +87,262 @@ def format_bytes(n: int) -> str:
     return f"{size:.2f} {unit}"
 
 
+def files_per_dir_for_shape(rows: int, cols: int, target_dir_bytes: int = TARGET_DIR_BYTES) -> int:
+    return max(1, target_dir_bytes // max(1, bytes_per_snapshot(rows, cols)))
+
+
+def sample_rel_path(sample_idx: int, files_per_dir: int) -> Path:
+    dir_idx = sample_idx // files_per_dir
+    return Path(f"chunk_{dir_idx:06d}") / f"snap_{sample_idx:012d}.bin"
+
+
+def snapshot_planes(board: Minesweeper) -> tuple[Array2D, Array2D, Array2D, Array2D]:
+    x_input = board.get_input().astype(PAYLOAD_DTYPE, copy=False)
+    y_prob = board.get_output().astype(PAYLOAD_DTYPE, copy=False)
+    covered_mask = (board.state == board.states.COVERED).astype(PAYLOAD_DTYPE, copy=False)
+    mine_mask = (board.mine_count == -1).astype(PAYLOAD_DTYPE, copy=False)
+    return x_input, y_prob, covered_mask, mine_mask
+
+
+def write_snapshot_payload(
+    out_path: Path,
+    x_input: Array2D,
+    y_prob: Array2D,
+    covered_mask: Array2D,
+    mine_mask: Array2D,
+) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("wb") as f:
+        np.asarray(x_input, dtype=PAYLOAD_DTYPE, order="C").ravel(order="C").tofile(f)
+        np.asarray(y_prob, dtype=PAYLOAD_DTYPE, order="C").ravel(order="C").tofile(f)
+        np.asarray(covered_mask, dtype=PAYLOAD_DTYPE, order="C").ravel(order="C").tofile(f)
+        np.asarray(mine_mask, dtype=PAYLOAD_DTYPE, order="C").ravel(order="C").tofile(f)
+
+
+def read_snapshot_payload(path: Path, rows: int, cols: int) -> tuple[Array2D, Array2D, Array2D, Array2D]:
+    expected_bytes = bytes_per_snapshot(rows, cols)
+    actual_bytes = path.stat().st_size
+    if actual_bytes != expected_bytes:
+        raise ValueError(
+            f"Snapshot payload size mismatch for {path}: expected {expected_bytes} bytes, got {actual_bytes} bytes"
+        )
+
+    raw = np.fromfile(path, dtype=PAYLOAD_DTYPE)
+    planes = raw.reshape((len(PAYLOAD_PLANES), rows, cols))
+    return planes[0], planes[1], planes[2], planes[3]
+
+
+def load_index_rows(out_dir: Path) -> list[dict[str, str]]:
+    index_path = out_dir / "index.csv"
+    with index_path.open("r", newline="", encoding="utf-8") as csv_file:
+        return list(csv.DictReader(csv_file))
+
+
+def sample_bin_files(out_dir: Path, n: int, seed: int) -> list[Path]:
+    rows = load_index_rows(out_dir)
+
+    if n <= 0 or not rows:
+        return []
+
+    rng = np.random.default_rng(seed)
+    picks = rng.choice(len(rows), size=min(n, len(rows)), replace=False)
+    return [out_dir / rows[int(i)]["path"] for i in picks]
+
+
 def confirm_proceed(num_samples: int, rows: int, cols: int) -> bool:
-    estimated_bytes = estimate_memory_bytes(num_samples, rows, cols)
-    print("Dataset allocation estimate")
+    sample_bytes = bytes_per_snapshot(rows, cols)
+    estimated_bytes = sample_bytes * num_samples
+    files_per_dir = files_per_dir_for_shape(rows, cols)
+    n_dirs = (num_samples + files_per_dir - 1) // files_per_dir
+
+    print("Dataset generation plan")
     print(f"difficulty={DIFFICULTY}")
-    print(f"shape=({num_samples}, {rows}, {cols}) per array")
-    print("arrays=x,y float32; mask bool")
-    print(f"estimated uncompressed dataset size={format_bytes(estimated_bytes)} ({estimated_bytes} bytes)")
-    print("generation mode=disk-backed memmap (low RAM)")
-    print(f"joblib workers={N_JOBS}")
+    print(f"shape=({rows}, {cols})")
+    print(f"samples={num_samples}")
+    print(f"payload arrays={PAYLOAD_PLANES}")
+    print(f"payload dtype={np.dtype(PAYLOAD_DTYPE).name}")
+    print(f"bytes_per_snapshot={sample_bytes} ({format_bytes(sample_bytes)})")
+    print(f"estimated total payload size={format_bytes(estimated_bytes)} ({estimated_bytes} bytes)")
+    print(f"target payload per directory={format_bytes(TARGET_DIR_BYTES)} ({TARGET_DIR_BYTES} bytes)")
+    print(f"computed files_per_dir={files_per_dir}")
+    print(f"snapshot files={num_samples}")
+    print(f"directories={n_dirs}")
+    print(f"output_dir={OUT_DIR}")
     print()
 
     response = input("Proceed? [Y/n]: ").strip().lower()
     return response in ("", "y", "yes")
 
 
-def split_samples(total: int, n_jobs: int) -> list[int]:
-    base = total // n_jobs
-    rem = total % n_jobs
-    return [base + (1 if i < rem else 0) for i in range(n_jobs)]
-
-
-def chunk_starts(chunk_sizes: list[int]) -> list[int]:
-    starts: list[int] = []
-    cur = 0
-    for size in chunk_sizes:
-        starts.append(cur)
-        cur += size
-    return starts
-
-
-def memmap_paths(out_path: Path) -> tuple[Path, Path, Path]:
-    tmp_base = out_path.with_suffix("")
-    return (
-        tmp_base.with_name(tmp_base.name + "_x.tmp.npy"),
-        tmp_base.with_name(tmp_base.name + "_y.tmp.npy"),
-        tmp_base.with_name(tmp_base.name + "_mask.tmp.npy"),
-    )
-
-
-def progress_monitor(counter, total: int) -> None:
-    last = 0
-    with tqdm(total=total, desc="Generating samples", unit="sample", mininterval=0.2) as pbar:
-        while last < total:
-            cur = counter.value
-            if cur > last:
-                pbar.update(cur - last)
-                last = cur
-            else:
-                sleep(0.1)
-
-
-def generate_dataset_chunk_to_memmap(
+def generate_snapshot_dataset(
     difficulty: str,
-    start_idx: int,
     num_samples: int,
     safe_reveal: bool,
     seed: int,
-    x_path: str,
-    y_path: str,
-    mask_path: str,
-    total_samples: int,
-    counter,
-    lock,
-) -> None:
+    out_dir: Path,
+) -> GenerationSummary:
+    rows = game_mode[difficulty]["rows"]
+    cols = game_mode[difficulty]["columns"]
+    files_per_dir = files_per_dir_for_shape(rows, cols)
+
     rng = np.random.default_rng(seed)
-
-    rows = game_mode[difficulty]["rows"]
-    cols = game_mode[difficulty]["columns"]
-    covered = float(Minesweeper(difficulty=difficulty, seed=0).states.COVERED)
-
-    x_arr = np.lib.format.open_memmap(
-        x_path,
-        mode="r+",
-        dtype=np.float32,
-        shape=(total_samples, rows, cols),
-    )
-    y_arr = np.lib.format.open_memmap(
-        y_path,
-        mode="r+",
-        dtype=np.float32,
-        shape=(total_samples, rows, cols),
-    )
-    mask_arr = np.lib.format.open_memmap(
-        mask_path,
-        mode="r+",
-        dtype=np.bool_,
-        shape=(total_samples, rows, cols),
-    )
-
     sample_idx = 0
-    progress_local = 0
+    game_idx = 0
 
-    while sample_idx < num_samples:
-        board = Minesweeper(
-            difficulty=difficulty,
-            seed=int(rng.integers(0, np.iinfo(np.int32).max)),
+    index_path = out_dir / "index.csv"
+    game_summary_path = out_dir / "game_summary.csv"
+    with (
+        index_path.open("w", newline="", encoding="utf-8") as index_file,
+        game_summary_path.open("w", newline="", encoding="utf-8") as game_file,
+    ):
+        writer = csv.writer(index_file)
+        writer.writerow(
+            [
+                "sample_idx",
+                "path",
+                "game_idx",
+                "game_seed",
+                "step",
+                "revealed_cells",
+                "revealed_frac",
+            ]
+        )
+        game_writer = csv.writer(game_file)
+        game_writer.writerow(
+            [
+                "game_idx",
+                "game_seed",
+                "sample_count",
+                "first_sample_idx",
+                "last_sample_idx",
+                "steps_simulated",
+            ]
         )
 
-        reveal = board.random_safe_reveal if safe_reveal else board.random_reveal
-        board.random_safe_reveal()
+        with tqdm(total=num_samples, desc="Writing snapshot bins", unit="sample", mininterval=0.2) as pbar:
+            while sample_idx < num_samples:
+                game_seed = int(rng.integers(0, np.iinfo(np.int64).max))
+                board = Minesweeper(difficulty=difficulty, seed=game_seed)
+                reveal = board.random_safe_reveal if safe_reveal else board.random_reveal
 
-        kept_from_game = 0
+                # Keep first reveal safe so each game contributes usable states.
+                board.random_safe_reveal()
 
-        while sample_idx < num_samples and not (board.game_over or board.game_won):
-            revealed = count_revealed(board)
-            write_idx = start_idx + sample_idx
+                kept_from_game = 0
+                step = 0
+                game_sample_count = 0
+                first_sample_idx = -1
+                last_sample_idx = -1
 
-            if should_keep_sample(board, revealed, MAX_SAMPLES_PER_GAME, kept_from_game):
-                x_arr[write_idx] = board.get_input()
-                y_arr[write_idx] = board.get_output()
-                mask_arr[write_idx] = x_arr[write_idx] == covered
-                sample_idx += 1
-                kept_from_game += 1
-                progress_local += 1
+                while sample_idx < num_samples and not (board.game_over or board.game_won):
+                    revealed = count_revealed(board)
+                    if should_keep_sample(board, revealed, MAX_SAMPLES_PER_GAME, kept_from_game):
+                        rel_path = sample_rel_path(sample_idx, files_per_dir)
+                        abs_path = out_dir / rel_path
 
-                if progress_local >= 64:
-                    with lock:
-                        counter.value += progress_local
-                    progress_local = 0
+                        x_input, y_prob, covered_mask, mine_mask = snapshot_planes(board)
+                        write_snapshot_payload(abs_path, x_input, y_prob, covered_mask, mine_mask)
 
-            reveal()
+                        revealed_frac = revealed / float(rows * cols)
+                        writer.writerow(
+                            [
+                                sample_idx,
+                                rel_path.as_posix(),
+                                game_idx,
+                                game_seed,
+                                step,
+                                revealed,
+                                f"{revealed_frac:.6f}",
+                            ]
+                        )
 
-    if progress_local:
-        with lock:
-            counter.value += progress_local
-    x_arr.flush()
-    y_arr.flush()
-    mask_arr.flush()
+                        if game_sample_count == 0:
+                            first_sample_idx = sample_idx
+                        last_sample_idx = sample_idx
+                        game_sample_count += 1
+
+                        sample_idx += 1
+                        kept_from_game += 1
+                        pbar.update(1)
+
+                    reveal()
+                    step += 1
+
+                game_writer.writerow(
+                    [
+                        game_idx,
+                        game_seed,
+                        game_sample_count,
+                        first_sample_idx,
+                        last_sample_idx,
+                        step,
+                    ]
+                )
+                game_idx += 1
+
+    return {
+        "num_samples": sample_idx,
+        "games_simulated": game_idx,
+        "rows": rows,
+        "cols": cols,
+        "bytes_per_snapshot": bytes_per_snapshot(rows, cols),
+        "files_per_dir": files_per_dir,
+        "target_dir_bytes": TARGET_DIR_BYTES,
+    }
 
 
-def generate_dataset_parallel(
-    difficulty: str,
-    num_samples: int,
-    safe_reveal: bool,
-    seed: int,
-    n_jobs: int,
-    out_path: Path,
-) -> ChunkResult:
-    rows = game_mode[difficulty]["rows"]
-    cols = game_mode[difficulty]["columns"]
+def write_metadata(out_dir: Path, summary: GenerationSummary) -> None:
+    metadata = {
+        "difficulty": DIFFICULTY,
+        "safe_reveal": SAFE_REVEAL,
+        "seed": SEED,
+        "num_samples": int(summary["num_samples"]),
+        "games_simulated": int(summary["games_simulated"]),
+        "rows": int(summary["rows"]),
+        "cols": int(summary["cols"]),
+        "payload": {
+            "format": "raw_bin_no_header",
+            "dtype": np.dtype(PAYLOAD_DTYPE).name,
+            "planes": list(PAYLOAD_PLANES),
+            "plane_count": len(PAYLOAD_PLANES),
+            "bytes_per_snapshot": int(summary["bytes_per_snapshot"]),
+        },
+        "index_file": "index.csv",
+        "game_summary_file": "game_summary.csv",
+        "files_per_dir": int(summary["files_per_dir"]),
+        "target_dir_bytes": int(summary["target_dir_bytes"]),
+    }
 
-    x_tmp_path, y_tmp_path, mask_tmp_path = memmap_paths(out_path)
-    x_path = str(x_tmp_path)
-    y_path = str(y_tmp_path)
-    mask_path = str(mask_tmp_path)
-
-    x_arr = np.lib.format.open_memmap(
-        x_path,
-        mode="w+",
-        dtype=np.float32,
-        shape=(num_samples, rows, cols),
-    )
-    y_arr = np.lib.format.open_memmap(
-        y_path,
-        mode="w+",
-        dtype=np.float32,
-        shape=(num_samples, rows, cols),
-    )
-    mask_arr = np.lib.format.open_memmap(
-        mask_path,
-        mode="w+",
-        dtype=np.bool_,
-        shape=(num_samples, rows, cols),
-    )
-    x_arr.flush()
-    y_arr.flush()
-    mask_arr.flush()
-
-    del x_arr
-    del y_arr
-    del mask_arr
-
-    if num_samples == 0:
-        x_empty = np.lib.format.open_memmap(x_path, mode="r+", dtype=np.float32, shape=(0, rows, cols))
-        y_empty = np.lib.format.open_memmap(y_path, mode="r+", dtype=np.float32, shape=(0, rows, cols))
-        mask_empty = np.lib.format.open_memmap(mask_path, mode="r+", dtype=np.bool_, shape=(0, rows, cols))
-        return x_empty, y_empty, mask_empty
-
-    chunk_sizes = split_samples(num_samples, n_jobs)
-    starts = chunk_starts(chunk_sizes)
-
-    with Manager() as mgr:
-        counter = mgr.Value("q", 0)
-        lock = mgr.Lock()
-
-        progress_thread = Thread(
-            target=progress_monitor,
-            args=(counter, num_samples),
-            daemon=True,
-        )
-        progress_thread.start()
-
-        Parallel(n_jobs=n_jobs, backend="loky")(
-            delayed(generate_dataset_chunk_to_memmap)(
-                difficulty=difficulty,
-                start_idx=starts[i],
-                num_samples=chunk_sizes[i],
-                safe_reveal=safe_reveal,
-                seed=seed + i,
-                x_path=x_path,
-                y_path=y_path,
-                mask_path=mask_path,
-                total_samples=num_samples,
-                counter=counter,
-                lock=lock,
-            )
-            for i in range(n_jobs)
-            if chunk_sizes[i] > 0
-        )
-
-        progress_thread.join()
-    x_arr = np.load(x_path, mmap_mode="r")
-    y_arr = np.load(y_path, mmap_mode="r")
-    mask_arr = np.load(mask_path, mmap_mode="r")
-    return x_arr, y_arr, mask_arr
+    with (out_dir / "metadata.json").open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
 
 
 def main() -> None:
     rows = game_mode[DIFFICULTY]["rows"]
     cols = game_mode[DIFFICULTY]["columns"]
 
-    if not confirm_proceed(NUM_SAMPLES, rows, cols):
+    if PROMPT_BEFORE_RUN and not confirm_proceed(NUM_SAMPLES, rows, cols):
         print("Aborted.")
         return
 
-    out_path = Path(OUT)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    x_arr, y_arr, mask_arr = generate_dataset_parallel(
+    summary = generate_snapshot_dataset(
         difficulty=DIFFICULTY,
         num_samples=NUM_SAMPLES,
         safe_reveal=SAFE_REVEAL,
         seed=SEED,
-        n_jobs=N_JOBS,
-        out_path=out_path,
+        out_dir=OUT_DIR,
     )
+    write_metadata(OUT_DIR, summary)
 
-    print("Generated dataset")
-    print(f"x shape={x_arr.shape}, dtype={x_arr.dtype}")
-
-    if SAVE_DATASET:
-        np.savez_compressed(
-            out_path,
-            x=x_arr,
-            y=y_arr,
-            mask=mask_arr,
-            difficulty=np.array(DIFFICULTY),
-        )
-
-        print("Saved dataset")
-        print(f"path={out_path}")
-        print(f"x shape={x_arr.shape}, dtype={x_arr.dtype}")
-        print(f"y shape={y_arr.shape}, dtype={y_arr.dtype}")
-        print(f"mask shape={mask_arr.shape}, dtype={mask_arr.dtype}")
-
-        # On Windows, memmap-backed files can remain locked until references are released.
-        del x_arr
-        del y_arr
-        del mask_arr
-        gc.collect()
-
-        x_tmp_path, y_tmp_path, mask_tmp_path = memmap_paths(out_path)
-        locked_paths: list[Path] = []
-        for tmp_path in (x_tmp_path, y_tmp_path, mask_tmp_path):
-            if tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except PermissionError:
-                    locked_paths.append(tmp_path)
-
-        if locked_paths:
-            print("Temporary memmap files retained because they are still locked by the OS:")
-            for p in locked_paths:
-                print(f"  {p}")
-        else:
-            print("Removed temporary memmap files")
+    print("Generated payload-only snapshot dataset")
+    print(f"output_dir={OUT_DIR}")
+    print(f"samples={summary['num_samples']}")
+    print(f"games_simulated={summary['games_simulated']}")
+    print(f"bytes_per_snapshot={summary['bytes_per_snapshot']}")
+    print(f"files_per_dir={summary['files_per_dir']} (target={format_bytes(summary['target_dir_bytes'])})")
+    print("layout per .bin payload: x_input, y_prob, covered_mask, mine_mask (all float64)")
 
 
 if __name__ == "__main__":
