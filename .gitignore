@@ -1,2 +1,20 @@
-# Ignore generated NumPy dataset files
+# Python bytecode / extension artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+rl/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data / model artifacts
+models/
+data/
+data_bin/
 *.npz
+*.bin
+*.tmp.npy
