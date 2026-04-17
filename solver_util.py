@@ -100,9 +100,11 @@ class ImmutableMixin(object):
         assert False, "must override"
 
     def _cached_canonical(self) -> Tuple[Any, ...]:
-        if not hasattr(self, "_immutable_canonical"):
+        try:
+            return self._immutable_canonical
+        except AttributeError:
             self._immutable_canonical = self._canonical()
-        return self._immutable_canonical
+            return self._immutable_canonical
 
     def __eq__(self, o: Any) -> bool:
         if self is o:
@@ -113,6 +115,8 @@ class ImmutableMixin(object):
         return not (self == o)
 
     def __hash__(self) -> int:
-        if not hasattr(self, "_immutable_hash"):
+        try:
+            return self._immutable_hash
+        except AttributeError:
             self._immutable_hash = hash(self._cached_canonical())
-        return self._immutable_hash
+            return self._immutable_hash

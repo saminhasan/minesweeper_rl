@@ -59,16 +59,16 @@ class Minesweeper:
         self._mines_placed = False
         self.covered_count: int = self.total_cells
 
-        # Use 64-bit board arrays so snapshot payload dtypes are consistent.
-        self.mine_count: np.ndarray = np.zeros(self.shape, dtype=np.int64)
-        self.state: np.ndarray = np.full(self.shape, self.states.COVERED, dtype=np.int64)
+        # int8 is sufficient: mine_count ∈ {-1..8}, state ∈ {-1, 0}.
+        self.mine_count: np.ndarray = np.zeros(self.shape, dtype=np.int8)
+        self.state: np.ndarray = np.full(self.shape, self.states.COVERED, dtype=np.int8)
 
         self.mines: Set[Tuple[int, int]] = set()
         self.tag_to_index: Dict[int, Tuple[int, int]] = {}
         self._safe_flat_cells: List[int] = []
         self._safe_flat_pos: Dict[int, int] = {}
 
-        self.mine_count.fill(0)
+        self.mine_count.fill(np.int8(0))
         cache_key = self.shape
         cached_neighbors = self._NEIGHBORS_CACHE.get(cache_key)
         if cached_neighbors is None:
@@ -126,13 +126,13 @@ class Minesweeper:
         mine_rows = flat_idx // self.n_cols
         mine_cols = flat_idx % self.n_cols
 
-        self.mine_count.fill(0)
+        self.mine_count.fill(np.int8(0))
         self.mine_count[mine_rows, mine_cols] = -1
 
         self.mines = set(zip(mine_rows.tolist(), mine_cols.tolist()))
 
         mine_mask = self.mine_count == -1
-        padded = np.pad(mine_mask.astype(np.int64), 1, mode="constant")
+        padded = np.pad(mine_mask.astype(np.int8), 1, mode="constant")  # int8 so + is arithmetic, not bool OR
         neighbors = (
             padded[:-2, :-2]
             + padded[:-2, 1:-1]
@@ -142,7 +142,7 @@ class Minesweeper:
             + padded[2:, :-2]
             + padded[2:, 1:-1]
             + padded[2:, 2:]
-        ).astype(np.int64)
+        ).astype(np.int8)
 
         self.mine_count[:, :] = neighbors
         self.mine_count[mine_mask] = -1
@@ -232,8 +232,8 @@ class Minesweeper:
     def get_neighbors(self, i: int, j: int) -> Tuple[Tuple[int, int], ...]:
         return self._neighbors[self._flat(i, j)]
     def get_frontier_cells(self) -> np.ndarray:
-        uncovered = self.state == self.states.UNCOVERED
-        padded = np.pad(uncovered.astype(np.int64), 1, mode="constant")
+        uncovered = self.state == self.states.UNCOVERED  # bool array
+        padded = np.pad(uncovered, 1, mode="constant")
         near_uncovered = (
             padded[:-2, :-2]
             + padded[:-2, 1:-1]
@@ -245,7 +245,7 @@ class Minesweeper:
             + padded[2:, 2:]
         )
         frontier = (self.state == self.states.COVERED) & (near_uncovered > 0)
-        return frontier.astype(np.int64)
+        return frontier.astype(np.int8)
 
     def create_rules_from_minefield(self) -> List[Rule]:
         rules: List[Rule] = []
@@ -273,7 +273,7 @@ class Minesweeper:
         decoded: Dict[Tuple[int, int], float] = {}
 
         default_probability = float(solution.get(None, 0.0))
-        probability = np.full(self.shape, default_probability, dtype=np.float64)
+        probability = np.full(self.shape, default_probability, dtype=np.float32)
 
         for tag, p in solution.items():
             if tag is None:
@@ -294,7 +294,7 @@ class Minesweeper:
 
     def get_input(self) -> np.ndarray:
         """Return v2 datagen input: covered=-1, uncovered=cell value (0..8)."""
-        return np.where(self.state == self.states.COVERED, self.states.COVERED, self.mine_count).astype(np.int64)
+        return np.where(self.state == self.states.COVERED, self.states.COVERED, self.mine_count).astype(np.int8)
 
     def get_output(self) -> np.ndarray:
         _, probability = self.solve_minefield()
@@ -381,8 +381,8 @@ def _quick_self_test() -> None:
 if __name__ == "__main__":
     _quick_self_test()
 
-    TOTAL_GAMES = 100
-    N_JOBS = 1
+    TOTAL_GAMES = 16
+    N_JOBS = 4
     DIFFICULTY = "hard"
     SAFE_REVEAL = True
 

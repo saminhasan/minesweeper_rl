@@ -3,7 +3,7 @@ import heapq
 import operator
 import itertools
 import collections
-from util import *
+from solver_util import *
 from functools import reduce
 from typing import Any, Set, Dict, List, Self, Tuple, Union, Iterator, Optional, Callable, Mapping, Iterable
 
@@ -99,10 +99,7 @@ class Permutation(ImmutableMixin):
         """return a new permutation by combining this permutation with
         'permu'
         the permutations must be compatible!"""
-        assert all(permu.mapping[k] == v for k, v in self.mapping.items() if k in permu.mapping)
-        mapping = dict(self.mapping)
-        mapping.update(permu.mapping)
-        return Permutation(mapping)
+        return Permutation({**self.mapping, **permu.mapping})
 
     def k(self) -> int:
         """return total # mines in this permutation"""
@@ -1006,11 +1003,10 @@ class EnumerationState(object):
     def mine_config(self) -> Permutation:
         """convert the set of fixed permutations into a single Permutation
         encompassing the mine configuration for the entire ruleset"""
-        fixed_iter = iter(self.fixed)
-        merged = next(fixed_iter)
-        for permu in fixed_iter:
-            merged = merged.combine(permu)
-        return merged
+        merged: dict = {}
+        for permu in self.fixed:
+            merged.update(permu.mapping)
+        return Permutation(merged)
 
     def enumerate(self) -> Iterator[Permutation]:
         """recursively generate all possible mine configurations for the ruleset"""
