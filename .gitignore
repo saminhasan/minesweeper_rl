@@ -12,9 +12,9 @@ rl/
 .ipynb_checkpoints/
 
 # Data / model artifacts
-models/
+.claude/
+logs/
 data/
-data_bin/
 *.npz
 *.bin
 *.tmp.npy

@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-04-16T08:28:01",
+  "level": "intermediate",
+  "run_dir": "data/intermediate/2026_04_16_06_08_21_intermediate_262144_123",
+  "model_dir": "models/cnn/intermediate",
+  "model_file": "model.keras",
+  "architecture_mismatch": false,
+  "base_channels": 64,
+  "dropout_rate": 0.1,
+  "dilation_rates": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "num_samples": 262144,
+  "train_samples": 235930,
+  "val_samples": 26214,
+  "epochs_requested": 48,
+  "batch_size": 128,
+  "epochs_ran": 22,
+  "best_train_loss": 0.00019241809786763042,
+  "best_val_loss": 0.000914926000405103,
+  "final_val_mine_mae": 0.007542192004621029,
+  "final_val_safe_mae": 0.007542191538959742,
+  "previous_best_val_loss": Infinity,
+  "improved": true,
+  "loss_curve_npz": "models/cnn/intermediate/training_curves/intermediate_2026_04_16_06_08_21_intermediate_262144_123_20260416_082801_loss_data.npz",
+  "train_loss_plot": "models/cnn/intermediate/training_curves/intermediate_2026_04_16_06_08_21_intermediate_262144_123_20260416_082801_train_loss.png",
+  "val_loss_plot": "models/cnn/intermediate/training_curves/intermediate_2026_04_16_06_08_21_intermediate_262144_123_20260416_082801_val_loss.png"
+}
