@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 import bayes_play
 import rl_play
@@ -183,43 +184,42 @@ def run_comparison(
     print(f"\nRunning {n_games} games on level={level}  (identical seeds for both strategies)")
     print("-" * 66)
 
-    for ep in range(n_games):
-        seed = seeds[ep]
+    with tqdm(range(n_games), desc="Compare", unit="game") as pbar:
+        for ep in pbar:
+            seed = seeds[ep]
 
-        _, rl_summary = rl_play.play_one_game(
-            episode_idx=ep,
-            level=level,
-            policy=policy,
-            predictor=predictor,
-            safe_start=safe_start,
-            seed=seed,
-        )
+            _, rl_summary = rl_play.play_one_game(
+                episode_idx=ep,
+                level=level,
+                policy=policy,
+                predictor=predictor,
+                safe_start=safe_start,
+                seed=seed,
+            )
 
-        _, bayes_summary = bayes_play.play_one_game(
-            episode_idx=ep,
-            level=level,
-            safe_start=safe_start,
-            seed=seed,
-        )
+            _, bayes_summary = bayes_play.play_one_game(
+                episode_idx=ep,
+                level=level,
+                safe_start=safe_start,
+                seed=seed,
+            )
 
-        rows.append({
-            "game":         ep + 1,
-            "seed":         seed,
-            "rl_won":       int(rl_summary["won"]),
-            "rl_steps":     rl_summary["steps"],
-            "rl_reward":    rl_summary["total_reward"],
-            "bayes_won":    int(bayes_summary["won"]),
-            "bayes_steps":  bayes_summary["steps"],
-            "bayes_reward": bayes_summary["total_reward"],
-        })
+            rows.append({
+                "game":         ep + 1,
+                "seed":         seed,
+                "rl_won":       int(rl_summary["won"]),
+                "rl_steps":     rl_summary["steps"],
+                "rl_reward":    rl_summary["total_reward"],
+                "bayes_won":    int(bayes_summary["won"]),
+                "bayes_steps":  bayes_summary["steps"],
+                "bayes_reward": bayes_summary["total_reward"],
+            })
 
-        if (ep + 1) % 10 == 0 or ep == 0:
             rl_wr    = sum(r["rl_won"]    for r in rows) / len(rows)
             bayes_wr = sum(r["bayes_won"] for r in rows) / len(rows)
-            print(
-                f"[{ep + 1:4d}/{n_games}]  "
-                f"RL:    won={'T' if rl_summary['won']    else 'F'}  wr={rl_wr:.3f}  |  "
-                f"Bayes: won={'T' if bayes_summary['won'] else 'F'}  wr={bayes_wr:.3f}"
+            pbar.set_postfix(
+                rl_wr=f"{rl_wr:.3f}",
+                b_wr=f"{bayes_wr:.3f}",
             )
 
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")

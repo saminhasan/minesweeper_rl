@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 from game_engine import Minesweeper, game_mode
 from predictor import Predictor
@@ -543,62 +544,59 @@ def train(
         f"level={level}, board={rows}x{cols}, episodes={episodes}, "
     )
 
-    for episode in range(1, episodes + 1):
-        rollout = play_episode(
-            level=level,
-            policy=policy,
-            predictor=predictor,
-            safe_start=safe_start,
-            difficulty_seed=int(np.random.randint(0, 2**31 - 1)),
-        )
-
-        loss_value = ppo_update(policy, optimizer, rollout)
-
-        reward_hist.append(float(rollout["reward"]))
-        win_hist.append(1.0 if rollout["won"] else 0.0)
-        step_hist.append(float(rollout["steps"]))
-        loss_hist.append(loss_value)
-
-        if episode % LOG_EVERY_EPISODES == 0 or episode == 1:
-            eval_window = min(WIN_RATE_WINDOW, len(win_hist))
-            current_wr = float(np.mean(win_hist[-eval_window:]))
-            print(
-                f"[ep {episode:5d}] "
-                f"reward={rollout['reward']:9.3f} "
-                f"won={'T' if rollout['won'] else 'F'} "
-                f"steps={rollout['steps']:4d} "
-                f"loss={loss_value:10.5f} "
-                f"wr({eval_window})={current_wr:.3f}"
+    with tqdm(range(1, episodes + 1), desc="Train", unit="ep") as pbar:
+        for episode in pbar:
+            rollout = play_episode(
+                level=level,
+                policy=policy,
+                predictor=predictor,
+                safe_start=safe_start,
+                difficulty_seed=int(np.random.randint(0, 2**31 - 1)),
             )
 
-        if episode % SAVE_EVERY_EPISODES == 0 or episode == episodes:
+            loss_value = ppo_update(policy, optimizer, rollout)
+
+            reward_hist.append(float(rollout["reward"]))
+            win_hist.append(1.0 if rollout["won"] else 0.0)
+            step_hist.append(float(rollout["steps"]))
+            loss_hist.append(loss_value)
+
             eval_window = min(WIN_RATE_WINDOW, len(win_hist))
             current_wr = float(np.mean(win_hist[-eval_window:]))
+            pbar.set_postfix(
+                won="T" if rollout["won"] else "F",
+                wr=f"{current_wr:.3f}",
+                loss=f"{loss_value:.4f}",
+            )
 
-            now = datetime.now().isoformat(timespec="seconds")
-            run_metrics = {
-                "timestamp": now,
-                "level": level,
-                "model_dir": str(model_dir),
-                "model_file": model_file,
-                "architecture_mismatch": bool(architecture_mismatch),
-                "base_channels": base_channels,
-                "episodes_requested": episodes,
-                "episodes_completed": episode,
-                "best_win_rate": best_eval_win_rate,
-                "current_win_rate": current_wr,
-                "recent_avg_reward": float(np.mean(reward_hist[-eval_window:])),
-                "recent_avg_steps": float(np.mean(step_hist[-eval_window:])),
-                "recent_avg_loss": float(np.nanmean(loss_hist[-eval_window:])),
-            }
-            save_json(last_metrics_path, run_metrics)
+            if episode % SAVE_EVERY_EPISODES == 0 or episode == episodes:
+                eval_window = min(WIN_RATE_WINDOW, len(win_hist))
+                current_wr = float(np.mean(win_hist[-eval_window:]))
 
-            if current_wr > best_eval_win_rate + MIN_IMPROVEMENT:
-                best_eval_win_rate = current_wr
-                model_path.parent.mkdir(parents=True, exist_ok=True)
-                policy.save(model_path)
-                save_json(best_metrics_path, {**run_metrics, "model_path": str(model_path)})
-                print(f"  >> Policy improved: win_rate={current_wr:.4f} saved -> {model_path}")
+                now = datetime.now().isoformat(timespec="seconds")
+                run_metrics = {
+                    "timestamp": now,
+                    "level": level,
+                    "model_dir": str(model_dir),
+                    "model_file": model_file,
+                    "architecture_mismatch": bool(architecture_mismatch),
+                    "base_channels": base_channels,
+                    "episodes_requested": episodes,
+                    "episodes_completed": episode,
+                    "best_win_rate": best_eval_win_rate,
+                    "current_win_rate": current_wr,
+                    "recent_avg_reward": float(np.mean(reward_hist[-eval_window:])),
+                    "recent_avg_steps": float(np.mean(step_hist[-eval_window:])),
+                    "recent_avg_loss": float(np.nanmean(loss_hist[-eval_window:])),
+                }
+                save_json(last_metrics_path, run_metrics)
+
+                if current_wr > best_eval_win_rate + MIN_IMPROVEMENT:
+                    best_eval_win_rate = current_wr
+                    model_path.parent.mkdir(parents=True, exist_ok=True)
+                    policy.save(model_path)
+                    save_json(best_metrics_path, {**run_metrics, "model_path": str(model_path)})
+                    print(f"  >> Policy improved: win_rate={current_wr:.4f} saved -> {model_path}")
 
     artifact_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     artifacts = save_training_artifacts(

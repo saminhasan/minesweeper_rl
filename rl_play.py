@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 from game_engine import Minesweeper, game_mode
 from predictor import Predictor
@@ -311,32 +312,33 @@ def play_many_games(
 
     rng = np.random.default_rng(SEED)
 
-    for ep in range(n_games):
-        seed = int(rng.integers(0, 2**31 - 1))
-        ep_steps, ep_summary = play_one_game(
-            episode_idx=ep,
-            level=level,
-            policy=policy,
-            predictor=predictor,
-            safe_start=safe_start,
-            seed=seed,
-        )
+    with tqdm(range(n_games), desc="RL Play", unit="game") as pbar:
+        for ep in pbar:
+            seed = int(rng.integers(0, 2**31 - 1))
+            ep_steps, ep_summary = play_one_game(
+                episode_idx=ep,
+                level=level,
+                policy=policy,
+                predictor=predictor,
+                safe_start=safe_start,
+                seed=seed,
+            )
 
-        if LOG_STEPS:
-            step_rows.extend(ep_steps)
-        if LOG_SUMMARIES:
-            summary_rows.append(ep_summary)
+            if LOG_STEPS:
+                step_rows.extend(ep_steps)
+            if LOG_SUMMARIES:
+                summary_rows.append(ep_summary)
 
-        wins += int(ep_summary["won"])
-        reward_sum += float(ep_summary["total_reward"])
-        step_sum += int(ep_summary["steps"])
+            wins += int(ep_summary["won"])
+            reward_sum += float(ep_summary["total_reward"])
+            step_sum += int(ep_summary["steps"])
 
-        print(
-            f"[game {ep + 1:4d}/{n_games}] "
-            f"won={'T' if ep_summary['won'] else 'F'} "
-            f"steps={ep_summary['steps']:4d} "
-            f"reward={ep_summary['total_reward']:10.3f}"
-        )
+            pbar.set_postfix(
+                won="T" if ep_summary["won"] else "F",
+                wr=f"{wins / (ep + 1):.3f}",
+                steps=ep_summary["steps"],
+                r=f"{ep_summary['total_reward']:.1f}",
+            )
 
     if LOG_STEPS:
         save_jsonl(run_dir / "steps.jsonl", step_rows)

@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 from game_engine import Minesweeper
 from predictor import Predictor
@@ -332,80 +333,80 @@ def run_comparison(
     print(f"Classification threshold for FP/FN: {PRED_THRESHOLD}")
     print("-" * 70)
 
-    for ep in range(n_games):
-        seed = seeds[ep]
-        board = new_board(level, seed=seed)
+    with tqdm(range(n_games), desc="Predict", unit="game") as pbar:
+        for ep in pbar:
+            seed = seeds[ep]
+            board = new_board(level, seed=seed)
 
-        if safe_start and not board_is_done(board):
-            board.random_safe_reveal()
+            if safe_start and not board_is_done(board):
+                board.random_safe_reveal()
 
-        game_bayes_briers: list[float] = []
-        game_cnn_briers:   list[float] = []
-        game_bayes_fprs:   list[float] = []
-        game_bayes_fnrs:   list[float] = []
-        game_cnn_fprs:     list[float] = []
-        game_cnn_fnrs:     list[float] = []
-        n_predictions = 0
-        steps = 0
+            game_bayes_briers: list[float] = []
+            game_cnn_briers:   list[float] = []
+            game_bayes_fprs:   list[float] = []
+            game_bayes_fnrs:   list[float] = []
+            game_cnn_fprs:     list[float] = []
+            game_cnn_fnrs:     list[float] = []
+            n_predictions = 0
+            steps = 0
 
-        while not board_is_done(board):
-            covered = get_covered_mask(board)
-            if not covered.any():
-                break
+            while not board_is_done(board):
+                covered = get_covered_mask(board)
+                if not covered.any():
+                    break
 
-            truth         = get_mine_truth(board)
-            bayes_prob    = np.asarray(board.get_output(), dtype=np.float32)
-            cnn_mine_prob, _ = cnn_pred.predict(board)
+                truth         = get_mine_truth(board)
+                bayes_prob    = np.asarray(board.get_output(), dtype=np.float32)
+                cnn_mine_prob, _ = cnn_pred.predict(board)
 
-            game_bayes_briers.append(brier_score(bayes_prob,    truth, covered))
-            game_cnn_briers.append(  brier_score(cnn_mine_prob, truth, covered))
+                game_bayes_briers.append(brier_score(bayes_prob,    truth, covered))
+                game_cnn_briers.append(  brier_score(cnn_mine_prob, truth, covered))
 
-            fpr_b, fnr_b = false_rates(bayes_prob,    truth, covered)
-            fpr_c, fnr_c = false_rates(cnn_mine_prob, truth, covered)
-            game_bayes_fprs.append(fpr_b)
-            game_bayes_fnrs.append(fnr_b)
-            game_cnn_fprs.append(fpr_c)
-            game_cnn_fnrs.append(fnr_c)
+                fpr_b, fnr_b = false_rates(bayes_prob,    truth, covered)
+                fpr_c, fnr_c = false_rates(cnn_mine_prob, truth, covered)
+                game_bayes_fprs.append(fpr_b)
+                game_bayes_fnrs.append(fnr_b)
+                game_cnn_fprs.append(fpr_c)
+                game_cnn_fnrs.append(fnr_c)
 
-            bayes_pool.append(bayes_prob[covered])
-            cnn_pool.append(cnn_mine_prob[covered])
-            truth_pool.append(truth[covered])
-            n_predictions += int(covered.sum())
+                bayes_pool.append(bayes_prob[covered])
+                cnn_pool.append(cnn_mine_prob[covered])
+                truth_pool.append(truth[covered])
+                n_predictions += int(covered.sum())
 
-            row, col = bayesian_best_action(board)
-            board.reveal(row, col)
-            steps += 1
+                row, col = bayesian_best_action(board)
+                board.reveal(row, col)
+                steps += 1
 
-        def _avg(lst: list[float]) -> float:
-            return float(np.nanmean(lst)) if lst else float("nan")
+            def _avg(lst: list[float]) -> float:
+                return float(np.nanmean(lst)) if lst else float("nan")
 
-        game_bayes_brier = _avg(game_bayes_briers)
-        game_cnn_brier   = _avg(game_cnn_briers)
-        game_bayes_fpr   = _avg(game_bayes_fprs)
-        game_bayes_fnr   = _avg(game_bayes_fnrs)
-        game_cnn_fpr     = _avg(game_cnn_fprs)
-        game_cnn_fnr     = _avg(game_cnn_fnrs)
+            game_bayes_brier = _avg(game_bayes_briers)
+            game_cnn_brier   = _avg(game_cnn_briers)
+            game_bayes_fpr   = _avg(game_bayes_fprs)
+            game_bayes_fnr   = _avg(game_bayes_fnrs)
+            game_cnn_fpr     = _avg(game_cnn_fprs)
+            game_cnn_fnr     = _avg(game_cnn_fnrs)
 
-        rows.append({
-            "game":          ep + 1,
-            "seed":          seed,
-            "won":           int(board.game_won),
-            "steps":         steps,
-            "n_predictions": n_predictions,
-            "bayes_brier":   game_bayes_brier,
-            "cnn_brier":     game_cnn_brier,
-            "bayes_fpr":     game_bayes_fpr,
-            "bayes_fnr":     game_bayes_fnr,
-            "cnn_fpr":       game_cnn_fpr,
-            "cnn_fnr":       game_cnn_fnr,
-        })
+            rows.append({
+                "game":          ep + 1,
+                "seed":          seed,
+                "won":           int(board.game_won),
+                "steps":         steps,
+                "n_predictions": n_predictions,
+                "bayes_brier":   game_bayes_brier,
+                "cnn_brier":     game_cnn_brier,
+                "bayes_fpr":     game_bayes_fpr,
+                "bayes_fnr":     game_bayes_fnr,
+                "cnn_fpr":       game_cnn_fpr,
+                "cnn_fnr":       game_cnn_fnr,
+            })
 
-        if (ep + 1) % 10 == 0 or ep == 0:
-            print(
-                f"[{ep + 1:4d}/{n_games}]  "
-                f"steps={steps:4d}  preds={n_predictions:5d}  "
-                f"bayes brier={game_bayes_brier:.4f} fnr={game_bayes_fnr:.3f}  |  "
-                f"cnn brier={game_cnn_brier:.4f} fnr={game_cnn_fnr:.3f}"
+            pbar.set_postfix(
+                b_brier=f"{game_bayes_brier:.4f}",
+                c_brier=f"{game_cnn_brier:.4f}",
+                b_fnr=f"{game_bayes_fnr:.3f}",
+                c_fnr=f"{game_cnn_fnr:.3f}",
             )
 
     # --- Pool arrays ---

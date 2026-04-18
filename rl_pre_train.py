@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 from game_engine import Minesweeper, game_mode
 from predictor import Predictor
@@ -356,7 +357,7 @@ def save_training_plots(
             out[i] = np.mean(arr[s:i + 1])
         return out
 
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
     fig.suptitle(f"Teacher Pretraining — {level} (rolling window={window})", fontsize=13)
 
     axes[0].plot(x, loss_hist, alpha=0.15, linewidth=0.6)
@@ -370,11 +371,7 @@ def save_training_plots(
     axes[1].set_ylim(-0.05, 1.05)
     axes[1].grid(True, alpha=0.3)
 
-    axes[2].plot(x, wins_hist, alpha=0.15, linewidth=0.6)
-    axes[2].plot(x, rolling(wins_hist), linewidth=1.8)
-    axes[2].set_ylabel("Wins per update")
-    axes[2].set_xlabel("Update")
-    axes[2].grid(True, alpha=0.3)
+
 
     plt.tight_layout()
     out_path = model_dir / "pretrain_curves.png"
@@ -463,81 +460,82 @@ def pretrain(
         f"level={level}, board={rows}x{cols}, n_games={n_games}, "
     )
 
-    while games < n_games:
-        steps, _ = collect_teacher_episode_into(
-            level=level,
-            predictor=predictor,
-            safe_start=safe_start,
-            difficulty_seed=int(np.random.randint(0, 2**31 - 1)),
-            states_out=ep_states,
-            masks_out=ep_masks,
-            actions_out=ep_actions,
-            rewards_out=ep_rewards,
-        )
+    with tqdm(total=n_games, desc="Pretrain", unit="game") as pbar:
+        while games < n_games:
+            steps, _ = collect_teacher_episode_into(
+                level=level,
+                predictor=predictor,
+                safe_start=safe_start,
+                difficulty_seed=int(np.random.randint(0, 2**31 - 1)),
+                states_out=ep_states,
+                masks_out=ep_masks,
+                actions_out=ep_actions,
+                rewards_out=ep_rewards,
+            )
 
-        discounted_returns_into(ep_rewards, ep_returns, steps, GAMMA)
+            discounted_returns_into(ep_rewards, ep_returns, steps, GAMMA)
 
-        batch_states[batch_write:batch_write + steps] = ep_states[:steps]
-        batch_masks[batch_write:batch_write + steps] = ep_masks[:steps]
-        batch_actions[batch_write:batch_write + steps] = ep_actions[:steps]
-        batch_returns[batch_write:batch_write + steps] = ep_returns[:steps]
+            batch_states[batch_write:batch_write + steps] = ep_states[:steps]
+            batch_masks[batch_write:batch_write + steps] = ep_masks[:steps]
+            batch_actions[batch_write:batch_write + steps] = ep_actions[:steps]
+            batch_returns[batch_write:batch_write + steps] = ep_returns[:steps]
 
-        batch_write += steps
-        games_in_batch += 1
-        games += 1
+            batch_write += steps
+            games_in_batch += 1
+            games += 1
+            pbar.update(1)
+            pbar.set_postfix(steps=steps)
 
-        if games % LOG_EVERY_WINS == 0 or games == 1:
-            print(f"[game {games:5d}/{n_games}]  steps={steps:4d}")
+            should_update = (games_in_batch >= UPDATE_AFTER_WINS) or (games == n_games)
+            if not should_update:
+                continue
 
-        should_update = (games_in_batch >= UPDATE_AFTER_WINS) or (games == n_games)
-        if not should_update:
-            continue
+            total_loss, policy_loss, teacher_acc = supervised_teacher_update(
+                policy=policy,
+                optimizer=optimizer,
+                states=batch_states[:batch_write],
+                action_masks=batch_masks[:batch_write],
+                actions=batch_actions[:batch_write],
+                returns=batch_returns[:batch_write],
+            )
 
-        total_loss, policy_loss, teacher_acc = supervised_teacher_update(
-            policy=policy,
-            optimizer=optimizer,
-            states=batch_states[:batch_write],
-            action_masks=batch_masks[:batch_write],
-            actions=batch_actions[:batch_write],
-            returns=batch_returns[:batch_write],
-        )
+            loss_hist.append(total_loss)
+            acc_hist.append(teacher_acc)
+            wins_hist.append(float(games_in_batch))
 
-        loss_hist.append(total_loss)
-        acc_hist.append(teacher_acc)
-        wins_hist.append(float(games_in_batch))
+            batch_write = 0
+            games_in_batch = 0
+            pbar.set_postfix(loss=f"{total_loss:.4f}", acc=f"{teacher_acc:.4f}", steps=steps)
 
-        batch_write = 0
-        games_in_batch = 0
+            now = datetime.now().isoformat(timespec="seconds")
+            run_metrics = {
+                "timestamp": now,
+                "level": level,
+                "model_dir": str(model_dir),
+                "model_file": model_file,
+                "architecture_mismatch": bool(architecture_mismatch),
+                "base_channels": base_channels,
+                "n_games": n_games,
+                "games_collected": games,
+                "teacher_total_loss": float(total_loss),
+                "teacher_policy_loss": float(policy_loss),
+                "teacher_acc": float(teacher_acc),
+                "best_teacher_acc": float(best_acc),
+            }
+            save_json(last_metrics_path, run_metrics)
 
-        now = datetime.now().isoformat(timespec="seconds")
-        run_metrics = {
-            "timestamp": now,
-            "level": level,
-            "model_dir": str(model_dir),
-            "model_file": model_file,
-            "architecture_mismatch": bool(architecture_mismatch),
-            "base_channels": base_channels,
-            "n_games": n_games,
-            "games_collected": games,
-            "teacher_total_loss": float(total_loss),
-            "teacher_policy_loss": float(policy_loss),
-            "teacher_acc": float(teacher_acc),
-            "best_teacher_acc": float(best_acc),
-        }
-        save_json(last_metrics_path, run_metrics)
-
-        if games % SAVE_EVERY_WINS == 0 or games == n_games:
-            improved = teacher_acc > best_acc + MIN_IMPROVEMENT
-            if improved:
-                best_acc = teacher_acc
-                model_path.parent.mkdir(parents=True, exist_ok=True)
-                policy.save(model_path)
-                save_json(best_metrics_path, {**run_metrics, "model_path": str(model_path), "best_teacher_acc": best_acc})
-                print(f"  >> Pretrain improved: acc={teacher_acc:.4f} saved -> {model_path}")
-            elif games == n_games:
-                model_path.parent.mkdir(parents=True, exist_ok=True)
-                policy.save(model_path)
-                print(f"  >> Final pretrained policy saved -> {model_path}")
+            if games % SAVE_EVERY_WINS == 0 or games == n_games:
+                improved = teacher_acc > best_acc + MIN_IMPROVEMENT
+                if improved:
+                    best_acc = teacher_acc
+                    model_path.parent.mkdir(parents=True, exist_ok=True)
+                    policy.save(model_path)
+                    save_json(best_metrics_path, {**run_metrics, "model_path": str(model_path), "best_teacher_acc": best_acc})
+                    print(f"  >> Pretrain improved: acc={teacher_acc:.4f} saved -> {model_path}")
+                elif games == n_games:
+                    model_path.parent.mkdir(parents=True, exist_ok=True)
+                    policy.save(model_path)
+                    print(f"  >> Final pretrained policy saved -> {model_path}")
 
     save_training_plots(loss_hist, acc_hist, wins_hist, model_dir, level)
 
@@ -562,19 +560,19 @@ if __name__ == "__main__":
         "easy": {
             "model_dir": Path("models/rl/easy"),
             "model_file": "policy.keras",
-            "n_games": 128,
+            "n_games": 4096,
             "safe_start": True,
         },
         "intermediate": {
             "model_dir": Path("models/rl/intermediate"),
             "model_file": "policy.keras",
-            "n_games": 256,
+            "n_games": 4096,
             "safe_start": True,
         },
         "hard": {
             "model_dir": Path("models/rl/hard"),
             "model_file": "policy.keras",
-            "n_games": 512,
+            "n_games": 4096,
             "safe_start": True,
         },
     }
