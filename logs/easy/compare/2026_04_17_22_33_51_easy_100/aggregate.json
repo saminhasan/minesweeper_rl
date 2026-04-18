@@ -1,0 +1,12 @@
+{
+  "level": "easy",
+  "n_games": 100,
+  "safe_start": true,
+  "policy_model": "models/RL/easy/policy.keras",
+  "rl_win_rate": 0.89,
+  "bayes_win_rate": 0.88,
+  "rl_avg_steps": 15.38,
+  "bayes_avg_steps": 14.24,
+  "rl_avg_reward": 8858.55,
+  "bayes_avg_reward": 8747.59
+}

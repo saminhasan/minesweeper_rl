@@ -1,0 +1,16 @@
+{
+  "level": "hard",
+  "n_games": 100,
+  "safe_start": true,
+  "cnn_model": "models/CNN/hard/model.keras",
+  "pred_threshold": 0.5,
+  "total_predictions": 3296411,
+  "bayes_avg_brier": 0.13530433559947755,
+  "cnn_avg_brier": 0.13743236012157947,
+  "bayes_auc": 0.8142884871573268,
+  "cnn_auc": 0.8078089508220774,
+  "bayes_fpr": 0.01925276758534039,
+  "bayes_fnr": 0.4138159462813653,
+  "cnn_fpr": 0.013911615179297409,
+  "cnn_fnr": 0.430436998134313
+}

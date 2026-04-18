@@ -1,0 +1,12 @@
+{
+  "level": "easy",
+  "n_games": 100,
+  "probability_source": "bayesian",
+  "policy_model_path": "models/rl/easy/policy.keras",
+  "cnn_model_path": "models/cnn/easy/model.keras",
+  "safe_start": true,
+  "wins": 83,
+  "win_rate": 0.83,
+  "avg_reward": 8194.41,
+  "avg_steps": 14.34
+}

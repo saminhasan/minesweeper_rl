@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-04-17T22:14:10",
+  "level": "hard",
+  "model_dir": "models/RL/hard",
+  "model_file": "policy.keras",
+  "architecture_mismatch": false,
+  "base_channels": 16,
+  "n_games": 2048,
+  "games_collected": 640,
+  "teacher_total_loss": 0.9085785746574402,
+  "teacher_policy_loss": 0.9078848361968994,
+  "teacher_acc": 0.7813325506747906,
+  "best_teacher_acc": 0.7813325506747906,
+  "model_path": "models/RL/hard/policy.keras"
+}

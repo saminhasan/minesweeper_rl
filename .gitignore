@@ -13,8 +13,10 @@ rl/
 
 # Data / model artifacts
 .claude/
-logs/
 data/
 *.npz
 *.bin
 *.tmp.npy
+
+# Large per-step logs (summaries and aggregates kept)
+*.jsonl

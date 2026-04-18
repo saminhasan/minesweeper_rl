@@ -1,0 +1,10 @@
+{
+  "level": "intermediate",
+  "n_games": 10000,
+  "player": "bayesian",
+  "safe_start": true,
+  "wins": 6846,
+  "win_rate": 0.6846,
+  "avg_reward": 6721.674,
+  "avg_steps": 61.6984
+}

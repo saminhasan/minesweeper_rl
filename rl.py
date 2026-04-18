@@ -18,9 +18,9 @@ LEVEL_POLICY_CONFIGS: dict[str, dict] = {
         "head_dense_layers": 2,
     },
     "hard": {
-        "base_channels": 32,
-        "conv_layers": 4,
-        "body_dense_layers": 8,
+        "base_channels": 16,
+        "conv_layers": 2,
+        "body_dense_layers": 4,
         "head_dense_layers": 4,
     },
 }

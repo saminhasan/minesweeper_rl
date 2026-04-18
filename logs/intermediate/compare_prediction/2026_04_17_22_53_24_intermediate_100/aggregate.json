@@ -1,0 +1,16 @@
+{
+  "level": "intermediate",
+  "n_games": 100,
+  "safe_start": true,
+  "cnn_model": "models/CNN/intermediate/model.keras",
+  "pred_threshold": 0.5,
+  "total_predictions": 733310,
+  "bayes_avg_brier": 0.08721112274407267,
+  "cnn_avg_brier": 0.08990812927848969,
+  "bayes_auc": 0.8897028226484077,
+  "cnn_auc": 0.8849777792794705,
+  "bayes_fpr": 0.017732588116402336,
+  "bayes_fnr": 0.2887135726936081,
+  "cnn_fpr": 0.011128756161445336,
+  "cnn_fnr": 0.31105297053614556
+}

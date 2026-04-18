@@ -1,0 +1,12 @@
+{
+  "level": "intermediate",
+  "n_games": 100,
+  "safe_start": true,
+  "policy_model": "models/RL/intermediate/policy.keras",
+  "rl_win_rate": 0.62,
+  "bayes_win_rate": 0.71,
+  "rl_avg_steps": 60.23,
+  "bayes_avg_steps": 63.12,
+  "rl_avg_reward": 5986.18,
+  "bayes_avg_reward": 7007.95
+}

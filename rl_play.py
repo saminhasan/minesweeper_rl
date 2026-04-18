@@ -18,8 +18,8 @@ from predictor import Predictor
 # -------------------------
 levels = ["easy", "intermediate", "hard"]
 
-LEVEL = levels[0]                      # "easy" | "intermediate" | "hard"
-N_GAMES = 1000
+LEVEL = levels[1]                      # "easy" | "intermediate" | "hard"
+N_GAMES = 200
 SAFE_START = True
 SEED = 123
 

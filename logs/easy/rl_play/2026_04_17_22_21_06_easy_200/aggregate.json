@@ -1,0 +1,10 @@
+{
+  "level": "easy",
+  "n_games": 200,
+  "policy_model_path": "models/RL/easy/policy.keras",
+  "safe_start": true,
+  "wins": 181,
+  "win_rate": 0.905,
+  "avg_reward": 9024.625,
+  "avg_steps": 16.015
+}
