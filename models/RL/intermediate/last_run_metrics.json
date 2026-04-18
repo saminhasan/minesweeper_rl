@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-04-17T18:30:25",
+  "level": "intermediate",
+  "model_dir": "models/rl/intermediate",
+  "model_file": "policy.keras",
+  "architecture_mismatch": false,
+  "base_channels": 16,
+  "episodes_requested": 1024,
+  "episodes_completed": 1024,
+  "best_win_rate": 1.0,
+  "current_win_rate": 0.0,
+  "recent_avg_reward": -0.5620370370370371,
+  "recent_avg_steps": 9.6,
+  "recent_avg_loss": -0.06519967243075371
+}

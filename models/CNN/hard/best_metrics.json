@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-04-17T04:32:05",
+  "level": "hard",
+  "run_dir": "data/hard/2026_04_16_06_19_37_hard_262144_123",
+  "model_dir": "models/cnn/hard",
+  "model_file": "model.keras",
+  "architecture_mismatch": false,
+  "base_channels": 96,
+  "dropout_rate": 0.12,
+  "dilation_rates": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "num_samples": 262144,
+  "train_samples": 235930,
+  "val_samples": 26214,
+  "epochs_requested": 64,
+  "batch_size": 64,
+  "epochs_ran": 23,
+  "best_train_loss": 2.5277151507907547e-05,
+  "best_val_loss": 0.00020769007096532732,
+  "final_val_mine_mae": 0.003291864413768053,
+  "final_val_safe_mae": 0.0032918641809374094,
+  "previous_best_val_loss": Infinity,
+  "improved": true,
+  "loss_curve_npz": "models/cnn/hard/training_curves/hard_2026_04_16_06_19_37_hard_262144_123_20260417_043205_loss_data.npz",
+  "train_loss_plot": "models/cnn/hard/training_curves/hard_2026_04_16_06_19_37_hard_262144_123_20260417_043205_train_loss.png",
+  "val_loss_plot": "models/cnn/hard/training_curves/hard_2026_04_16_06_19_37_hard_262144_123_20260417_043205_val_loss.png",
+  "model_path": "models/cnn/hard/model.keras"
+}

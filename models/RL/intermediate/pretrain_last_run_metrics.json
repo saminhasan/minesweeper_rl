@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-04-17T20:17:09",
+  "level": "intermediate",
+  "model_dir": "models/rl/intermediate",
+  "model_file": "policy.keras",
+  "architecture_mismatch": false,
+  "base_channels": 16,
+  "n_games": 4096,
+  "games_collected": 4096,
+  "teacher_total_loss": 0.23598994314670563,
+  "teacher_policy_loss": 0.23541460931301117,
+  "teacher_acc": 0.8835943469377854,
+  "best_teacher_acc": 0.9108520335351936
+}

@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-04-17T18:59:46",
+  "level": "easy",
+  "model_dir": "models/rl/easy",
+  "model_file": "policy.keras",
+  "architecture_mismatch": false,
+  "base_channels": 8,
+  "n_games": 4096,
+  "games_collected": 608,
+  "teacher_total_loss": 0.2862901985645294,
+  "teacher_policy_loss": 0.28604206442832947,
+  "teacher_acc": 0.8708193971211695,
+  "best_teacher_acc": 0.9187710440469912
+}
