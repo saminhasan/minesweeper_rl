@@ -561,7 +561,7 @@ if __name__ == "__main__":
         "easy": {
             "run_name": "",
             "data_dir": Path("data/easy"),
-            "model_dir": Path("models/cnn/easy"),
+            "model_dir": Path("models/CNN/easy"),
             "model_file": "model.keras",
             "epochs": 32,
             "batch_size": 256,
@@ -572,7 +572,7 @@ if __name__ == "__main__":
         "intermediate": {
             "run_name": "",
             "data_dir": Path("data/intermediate"),
-            "model_dir": Path("models/cnn/intermediate"),
+            "model_dir": Path("models/CNN/intermediate"),
             "model_file": "model.keras",
             "epochs": 48,
             "batch_size": 128,
@@ -583,7 +583,7 @@ if __name__ == "__main__":
         "hard": {
             "run_name": "",
             "data_dir": Path("data/hard"),
-            "model_dir": Path("models/cnn/hard"),
+            "model_dir": Path("models/CNN/hard"),
             "model_file": "model.keras",
             "epochs": 64,
             "batch_size": 64,

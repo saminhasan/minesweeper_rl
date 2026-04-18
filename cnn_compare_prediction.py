@@ -25,7 +25,7 @@ SAFE_START     = True
 SEED           = 123
 PRED_THRESHOLD = 0.5         # probability cutoff for FP/FN classification
 
-CNN_MODEL_PATH = Path(f"models/cnn/{LEVEL}/model.keras")
+CNN_MODEL_PATH = Path(f"models/CNN/{LEVEL}/model.keras")
 OUT_DIR        = Path(f"logs/{LEVEL}/compare_prediction")
 
 

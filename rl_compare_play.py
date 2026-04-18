@@ -25,7 +25,7 @@ N_GAMES    = 200
 SAFE_START = True
 SEED       = 123
 
-POLICY_MODEL_PATH = Path(f"models/rl/{LEVEL}/policy.keras")
+POLICY_MODEL_PATH = Path(f"models/RL/{LEVEL}/policy.keras")
 OUT_DIR           = Path(f"logs/{LEVEL}/compare")
 
 

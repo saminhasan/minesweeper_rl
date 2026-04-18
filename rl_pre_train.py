@@ -558,19 +558,19 @@ if __name__ == "__main__":
 
     LEVEL_CONFIGS: dict[str, dict[str, Any]] = {
         "easy": {
-            "model_dir": Path("models/rl/easy"),
+            "model_dir": Path("models/RL/easy"),
             "model_file": "policy.keras",
             "n_games": 4096,
             "safe_start": True,
         },
         "intermediate": {
-            "model_dir": Path("models/rl/intermediate"),
+            "model_dir": Path("models/RL/intermediate"),
             "model_file": "policy.keras",
             "n_games": 4096,
             "safe_start": True,
         },
         "hard": {
-            "model_dir": Path("models/rl/hard"),
+            "model_dir": Path("models/RL/hard"),
             "model_file": "policy.keras",
             "n_games": 4096,
             "safe_start": True,

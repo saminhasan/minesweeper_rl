@@ -11,9 +11,9 @@ _probability_sources = ["bayesian", "cnn"]
 _PROBABILITY_SOURCE = _probability_sources[0]  # ← change index: 0=bayesian, 1=cnn
 
 _level_cnn_paths: dict[str, Path] = {
-    "easy":         Path("models/cnn/easy/model.keras"),
-    "intermediate": Path("models/cnn/intermediate/model.keras"),
-    "hard":         Path("models/cnn/hard/model.keras"),
+    "easy":         Path("models/CNN/easy/model.keras"),
+    "intermediate": Path("models/CNN/intermediate/model.keras"),
+    "hard":         Path("models/CNN/hard/model.keras"),
 }
 
 
