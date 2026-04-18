@@ -20,7 +20,7 @@ from predictor import Predictor
 # -------------------------
 levels = ["easy", "intermediate", "hard"]
 
-LEVEL      = levels[1]   # 0=easy, 1=intermediate, 2=hard
+LEVEL      = levels[2]   # 0=easy, 1=intermediate, 2=hard
 N_GAMES    = 200
 SAFE_START = True
 SEED       = 123

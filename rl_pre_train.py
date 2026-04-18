@@ -554,7 +554,7 @@ def pretrain(
 # -------------------------
 if __name__ == "__main__":
     levels = ["easy", "intermediate", "hard"]
-    ACTIVE_LEVEL = levels[1]          # ← change index: 0=easy, 1=intermediate, 2=hard
+    ACTIVE_LEVEL = levels[2]          # ← change index: 0=easy, 1=intermediate, 2=hard
 
     LEVEL_CONFIGS: dict[str, dict[str, Any]] = {
         "easy": {
